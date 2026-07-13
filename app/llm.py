@@ -76,8 +76,28 @@ async def audit_residual_pii(cleaned_text: str) -> list[dict]:
         items = json.loads(m.group(0)) if m else []
     except json.JSONDecodeError:
         return []
+    PH_NAMES = ("ФИО", "ТЕЛЕФОН", "EMAIL", "ОРГАНИЗАЦИЯ", "ФИЛИАЛ", "АДРЕС", "СНИЛС", "ИНН",
+                "СЧЁТ", "КАРТА", "ПАСПОРТ", "ДАТА_РОЖДЕНИЯ")
+    # страны/госупоминания и валюта — не ПДн (аудитор-LLM любит их хватать)
+    STOP_SUBSTR = ("российск", "россия", "россии", " рф", "рф ", "рубль", "рубл")
     valid = []
     for it in items:
-        if isinstance(it, dict) and it.get("value") and it["value"] in cleaned_text:
-            valid.append({"type": it.get("type", "org"), "value": it["value"]})
+        if not (isinstance(it, dict) and it.get("value") and it["value"] in cleaned_text):
+            continue
+        v = it["value"]
+        # не даём аудитору "чистить" плейсхолдеры первого слоя и их обрывки
+        if any(name in v for name in PH_NAMES):
+            continue
+        typ = it.get("type", "org")
+        # телефон обязан содержать хотя бы 6 цифр (отсекает "Исх. № 989" и т.п.)
+        if typ == "phone" and sum(ch.isdigit() for ch in v) < 6:
+            continue
+        # общий предохранитель: не вычищаем канцелярские реквизиты
+        if re.match(r"^(исх|вх)\.?\s*№", v, re.I):
+            continue
+        # страна/валюта/госупоминания — не ПДн
+        vl = f" {v.lower()} "
+        if any(sub in vl for sub in STOP_SUBSTR):
+            continue
+        valid.append({"type": typ, "value": v})
     return valid
