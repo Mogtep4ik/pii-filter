@@ -1,0 +1,15 @@
+services:
+  # Контейнерная Ollama выключена по умолчанию (обычно стоит на хосте).
+  # Поднять: docker compose --profile with-ollama up -d
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["with-ollama"]
+    ports: ["11434:11434"]
+    volumes: [ollamadata:/root/.ollama]
+  backend:
+    build: .
+    env_file: .env
+    ports: ["8002:8002"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+volumes:
+  ollamadata:
