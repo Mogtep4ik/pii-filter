@@ -164,10 +164,13 @@ def _merge(entities: list[Entity]) -> list[Entity]:
     return merged
 
 
-async def clean_text(text: str, llm_classify_dates=None) -> dict:
+async def clean_text(text: str, llm_classify_dates=None, use_ner: bool = True) -> dict:
     """Главная функция. llm_classify_dates: async fn(text, [Entity]) -> ['birth'|'keep', ...]
-    для спорных дат; None -> спорные даты вычищаются (безопасный дефолт)."""
-    entities = _find_regex_entities(text) + _find_ner_entities(text)
+    для спорных дат; None -> спорные даты вычищаются (безопасный дефолт).
+    use_ner=False отключает слой Natasha (нужно для замера вклада слоёв в задержку)."""
+    entities = _find_regex_entities(text)
+    if use_ner:
+        entities += _find_ner_entities(text)
     entities = _drop_inside_placeholders(text, entities)
 
     dates = _classify_dates_heuristic(text)

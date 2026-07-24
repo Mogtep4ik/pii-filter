@@ -10,6 +10,8 @@ services:
     build: .
     env_file: .env
     ports: ["8002:8002"]
+    # отчёты бенчмарка пишутся внутри контейнера — пробрасываем наружу, чтобы коммитить
+    volumes: ["./results:/srv/results"]
     extra_hosts: ["host.docker.internal:host-gateway"]
 volumes:
   ollamadata:

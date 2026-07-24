@@ -1,0 +1,23 @@
+[
+  {
+    "config": "regex",
+    "docs": 120,
+    "median_ms": 0.2,
+    "p95_ms": 0.2,
+    "max_ms": 0.2
+  },
+  {
+    "config": "regex+ner",
+    "docs": 120,
+    "median_ms": 3.3,
+    "p95_ms": 4.6,
+    "max_ms": 7.8
+  },
+  {
+    "config": "full (+LLM)",
+    "docs": 15,
+    "median_ms": 12919.1,
+    "p95_ms": 16402.1,
+    "max_ms": 16826.3
+  }
+]
