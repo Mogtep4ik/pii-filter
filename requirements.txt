@@ -7,3 +7,4 @@ python-docx==1.*
 python-multipart==0.0.*
 setuptools<81
 pymorphy2-dicts-ru
+pytest==8.*

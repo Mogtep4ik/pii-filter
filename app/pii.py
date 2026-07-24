@@ -43,6 +43,10 @@ DATE_RE = re.compile(r"\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b|\b\d{1,2}\s+(?:янв|�
 BIRTH_CTX = re.compile(r"рожден|род\.|дата\s+рожд|д\.р\.", re.I)
 DOC_DATE_CTX = re.compile(r"договор|подписа|заключ|составлен|акт|срок|не\s+позднее|до\s*$|вступает|выдан|запланирован|отпуск|принята.*до|закон[а-я]*\s+от|приказ[а-я]*|исх\.?\s*№|вх\.?\s*№|постановлен|№\s*\d+[-\s]?ФЗ", re.I)
 
+# Уже проставленный плейсхолдер: его содержимое не должно распознаваться заново
+# (NER принимает «ТЕЛЕФОН_1» за название организации -> [[ОРГАНИЗАЦИЯ_1]]).
+PLACEHOLDER_RE = re.compile(r"\[[А-ЯЁA-Z_]+_\d+\]")
+
 BRANCH_RE = re.compile(r"(?:[А-ЯЁ][а-яё-]+\s+)?филиал[а-яё]*(?:\s+«[^»]+»|\s+в\s+г\.\s*[А-ЯЁ][а-яё-]+)?|обособленное\s+подразделение\s+«[^»]+»", re.I)
 ORG_QUOTED_RE = re.compile(r"\b(?:ООО|АО|ПАО|ЗАО|ИП|ФГУП|ГУП|АНО)\s+«[^»]+»")
 
@@ -135,6 +139,20 @@ def _classify_dates_heuristic(text: str) -> list[tuple[Entity, str]]:
     return results
 
 
+def _drop_inside_placeholders(text: str, entities: list[Entity]) -> list[Entity]:
+    """Отбрасывает «сущности», найденные внутри уже проставленных плейсхолдеров.
+
+    Нужно, потому что очистка может применяться к уже очищенному тексту (повторный
+    прогон, LLM-аудит вторым проходом) — и без этого фильтра пайплайн заворачивает
+    собственные плейсхолдеры: [ТЕЛЕФОН_1] -> [[ОРГАНИЗАЦИЯ_1]].
+    """
+    zones = [(m.start(), m.end()) for m in PLACEHOLDER_RE.finditer(text)]
+    if not zones:
+        return entities
+    return [e for e in entities
+            if not any(z0 <= e.start and e.end <= z1 for z0, z1 in zones)]
+
+
 def _merge(entities: list[Entity]) -> list[Entity]:
     """Убирает перекрытия: приоритет более длинной сущности (org «...» длиннее ФИО внутри)."""
     entities.sort(key=lambda e: (e.start, -(e.end - e.start)))
@@ -150,6 +168,7 @@ async def clean_text(text: str, llm_classify_dates=None) -> dict:
     """Главная функция. llm_classify_dates: async fn(text, [Entity]) -> ['birth'|'keep', ...]
     для спорных дат; None -> спорные даты вычищаются (безопасный дефолт)."""
     entities = _find_regex_entities(text) + _find_ner_entities(text)
+    entities = _drop_inside_placeholders(text, entities)
 
     dates = _classify_dates_heuristic(text)
     unsure = [e for e, verdict in dates if verdict == "unsure"]
