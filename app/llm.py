@@ -9,7 +9,7 @@
 документ целиком — основную массу закрывают regex+NER за миллисекунды.
 MOCK_MODE=true: слой отключается (для тестов без Ollama).
 """
-import os, json, re, httpx
+import asyncio, os, json, re, httpx
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
@@ -18,13 +18,59 @@ MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
 usage = {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
 
+async def _retry(make_request, attempts: int = 3, delay: float = 3.0):
+    """Повтор запроса при временных отказах Ollama.
+
+    Пока модель подгружается в память (у gemma3:4b это ~20 с после простоя),
+    Ollama отвечает 500 вместо того, чтобы подождать. Одиночный запрос из-за
+    этого падает на ровном месте — поэтому пробуем несколько раз с паузой.
+    Ошибки не-5xx (например, 404 «нет такой модели») повторять бессмысленно —
+    пробрасываем сразу.
+    """
+    last = None
+    for attempt in range(attempts):
+        try:
+            return await make_request()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code < 500:
+                raise
+            last = e
+        except (httpx.ConnectError, httpx.ReadTimeout) as e:
+            last = e
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay)
+    raise last
+
+
+async def warmup() -> bool:
+    """Заранее загрузить модель в память, чтобы первый рабочий запрос не ждал.
+
+    Вызывается при старте сервиса. Если Ollama недоступна — не падаем:
+    сервис поднимается, LLM-слой просто отработает позже.
+    """
+    if MOCK_MODE:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=300) as c:
+            r = await c.post(f"{OLLAMA_URL}/api/generate",
+                             json={"model": LLM_MODEL, "prompt": "ok", "stream": False,
+                                   "options": {"num_predict": 1}})
+            r.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+
 async def _generate(prompt: str) -> str:
-    async with httpx.AsyncClient(timeout=600) as c:
-        r = await c.post(f"{OLLAMA_URL}/api/generate",
-                         json={"model": LLM_MODEL, "prompt": prompt, "stream": False,
-                               "options": {"temperature": 0}})
-        r.raise_for_status()
-        data = r.json()
+    async def once():
+        async with httpx.AsyncClient(timeout=600) as c:
+            r = await c.post(f"{OLLAMA_URL}/api/generate",
+                             json={"model": LLM_MODEL, "prompt": prompt, "stream": False,
+                                   "options": {"temperature": 0}})
+            r.raise_for_status()
+            return r.json()
+
+    data = await _retry(once)
     usage["llm_calls"] += 1
     usage["prompt_tokens"] += data.get("prompt_eval_count", 0)
     usage["completion_tokens"] += data.get("eval_count", 0)

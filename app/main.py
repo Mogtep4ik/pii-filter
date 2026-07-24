@@ -89,6 +89,17 @@ def restore(payload: RestoreIn):
     return pii.restore_text(payload.text, payload.removed)
 
 
+@app.on_event("startup")
+async def _warmup_model() -> None:
+    """Прогрев: подгружаем модель в память сразу при старте.
+
+    Иначе первый рабочий запрос ждёт загрузку (~20 с) и рискует получить от
+    Ollama 500. Если Ollama не поднята — сервис всё равно стартует.
+    """
+    app.state.warm = await llm.warmup()
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "mock_mode": llm.MOCK_MODE, "llm_model": llm.LLM_MODEL}
+    return {"ok": True, "mock_mode": llm.MOCK_MODE, "llm_model": llm.LLM_MODEL,
+            "model_warm": getattr(app.state, "warm", False)}

@@ -156,3 +156,54 @@ def test_restore_handles_double_digit_indexes():
                {"type": "fio", "value": "Петров", "placeholder": "[ФИО_10]"}]
     back = restore_text("[ФИО_10] и [ФИО_1]", removed)
     assert back["restored_text"] == "Петров и Иванов"
+
+
+# --------------------------------------------------------------------------
+# 4. Устойчивость LLM-слоя к холодному старту Ollama
+# --------------------------------------------------------------------------
+
+import httpx  # noqa: E402
+
+from app.llm import _retry  # noqa: E402
+
+
+def _http_error(code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://ollama/api/generate")
+    return httpx.HTTPStatusError("err", request=request,
+                                 response=httpx.Response(code, request=request))
+
+
+def test_retry_recovers_after_transient_500():
+    """Ollama отвечает 500, пока грузит модель — со второй попытки должно пройти."""
+    calls = {"n": 0}
+
+    async def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _http_error(500)
+        return {"response": "ok"}
+
+    result = asyncio.run(_retry(flaky, attempts=3, delay=0))
+    assert result == {"response": "ok"}
+    assert calls["n"] == 2
+
+
+def test_retry_does_not_repeat_client_errors():
+    """404 «нет такой модели» повторять бессмысленно — падаем сразу."""
+    calls = {"n": 0}
+
+    async def missing_model():
+        calls["n"] += 1
+        raise _http_error(404)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(_retry(missing_model, attempts=3, delay=0))
+    assert calls["n"] == 1
+
+
+def test_retry_gives_up_and_raises_last_error():
+    async def always_down():
+        raise _http_error(503)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(_retry(always_down, attempts=2, delay=0))
