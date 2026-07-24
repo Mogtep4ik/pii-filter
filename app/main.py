@@ -74,6 +74,21 @@ async def clean_file(file: UploadFile = File(...), mode: str = Form("full")):
     return result
 
 
+class RestoreIn(BaseModel):
+    text: str          # ответ внешней LLM, содержащий плейсхолдеры
+    removed: list[dict]  # карта подстановок — поле `removed` из ответа /clean
+
+
+@app.post("/restore")
+def restore(payload: RestoreIn):
+    """Обратная подстановка: возвращает в ответ модели исходные значения.
+
+    Полный цикл гейтвея: /clean -> внешняя LLM -> /restore. Карта подстановок
+    хранится на стороне гейтвея и наружу не уходит.
+    """
+    return pii.restore_text(payload.text, payload.removed)
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "mock_mode": llm.MOCK_MODE, "llm_model": llm.LLM_MODEL}

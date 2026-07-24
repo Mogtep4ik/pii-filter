@@ -115,3 +115,44 @@ def test_empty_text_does_not_crash():
     result = clean("")
     assert result["cleaned_text"] == ""
     assert result["entities_found"] == 0
+
+
+# --------------------------------------------------------------------------
+# 3. Обратная подстановка (/restore)
+# --------------------------------------------------------------------------
+
+from app.pii import restore_text  # noqa: E402
+
+
+def test_roundtrip_restores_original_text():
+    """clean -> restore возвращает ровно исходный текст."""
+    src = ("Договор с ООО «Ромашка»: контакт Смирнов Пётр Николаевич, "
+           "тел. 89261234567, email smirnov85@mail.ru, ИНН 7712345678.")
+    cleaned = clean(src)
+    back = restore_text(cleaned["cleaned_text"], cleaned["removed"])
+    assert back["restored_text"] == src
+
+
+def test_restore_works_on_llm_answer_quoting_placeholders():
+    """Реальный сценарий: внешняя модель цитирует часть плейсхолдеров."""
+    cleaned = clean("Клиент Смирнов Пётр Николаевич, тел. 89261234567.")
+    answer = "Свяжитесь с [ФИО_1] по номеру [ТЕЛЕФОН_1] в рабочее время."
+    back = restore_text(answer, cleaned["removed"])
+    assert "Смирнов" in back["restored_text"]
+    assert "89261234567" in back["restored_text"]
+    assert "[ФИО_1]" not in back["restored_text"]
+
+
+def test_restore_reports_unknown_placeholders():
+    """Плейсхолдер, которого нет в карте — галлюцинация модели, не подставляем."""
+    back = restore_text("Ответ для [ФИО_7].", [])
+    assert back["restored_text"] == "Ответ для [ФИО_7]."
+    assert back["unknown_placeholders"] == ["[ФИО_7]"]
+
+
+def test_restore_handles_double_digit_indexes():
+    """[ФИО_1] не должен подставиться внутрь [ФИО_10]."""
+    removed = [{"type": "fio", "value": "Иванов", "placeholder": "[ФИО_1]"},
+               {"type": "fio", "value": "Петров", "placeholder": "[ФИО_10]"}]
+    back = restore_text("[ФИО_10] и [ФИО_1]", removed)
+    assert back["restored_text"] == "Петров и Иванов"

@@ -202,6 +202,30 @@ async def clean_text(text: str, llm_classify_dates=None) -> dict:
     return {"cleaned_text": out, "removed": removed, "entities_found": len(removed)}
 
 
+def restore_text(text: str, removed: list[dict]) -> dict:
+    """Обратная операция к clean_text: подставляет исходные значения вместо плейсхолдеров.
+
+    Замыкает цикл гейтвея: наружу во внешнюю LLM уходит обезличенный текст, а ответ
+    модели возвращается пользователю с настоящими именами и реквизитами. Карта
+    подстановок (`removed` из ответа /clean) при этом не покидает наш контур.
+
+    Подставляются только плейсхолдеры, реально встреченные в тексте: внешняя модель
+    цитирует не все. Плейсхолдеры, которых нет в карте, остаются как есть — это
+    галлюцинация модели, подставлять туда нечего.
+    """
+    mapping = {r["placeholder"]: r["value"] for r in removed}
+    out = text
+    restored, unknown = [], []
+    for ph in sorted(mapping, key=len, reverse=True):  # длинные первыми: _10 раньше _1
+        if ph in out:
+            out = out.replace(ph, mapping[ph])
+            restored.append(ph)
+    for m in PLACEHOLDER_RE.finditer(out):
+        if m.group(0) not in mapping:
+            unknown.append(m.group(0))
+    return {"restored_text": out, "restored": restored, "unknown_placeholders": unknown}
+
+
 def apply_extra_removals(cleaned: str, removed: list[dict], extra: list[dict]) -> tuple[str, list[dict]]:
     """Вычищает сущности, найденные LLM-аудитором вторым проходом."""
     counters: dict[str, int] = {}
